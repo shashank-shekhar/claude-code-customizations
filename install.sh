@@ -34,8 +34,11 @@ fi
 
 printf 'Target: %s\n\n' "$TARGET"
 
-# --- read the "<!-- vMAJOR.MINOR -->" marker from a file -------------------
-# Prints "MAJOR MINOR", or "0 0" if the file is missing / has no marker.
+# --- resolve a file's version ----------------------------------------------
+# Prints "MAJOR MINOR". Prefers an inline "<!-- vMAJOR.MINOR -->" marker; for
+# files that cannot hold a comment (e.g. *.json themes) it falls back to a
+# sidecar "<file>.version" containing a bare "vMAJOR.MINOR". "0 0" if neither is
+# present (such a file installs once and is then left untouched).
 read_version() {
     _file=$1
     if [ ! -f "$_file" ]; then
@@ -43,13 +46,15 @@ read_version() {
         return
     fi
     _line=$(grep -m1 -E '<!--[[:space:]]*v[0-9]+\.[0-9]+[[:space:]]*-->' "$_file" 2>/dev/null || true)
-    if [ -z "$_line" ]; then
-        echo "0 0"
-        return
+    if [ -n "$_line" ]; then
+        _ver=$(printf '%s\n' "$_line" | sed -n 's/.*<!--[[:space:]]*v\([0-9]*\)\.\([0-9]*\)[[:space:]]*-->.*/\1 \2/p')
+        [ -n "$_ver" ] && { echo "$_ver"; return; }
     fi
-    _ver=$(printf '%s\n' "$_line" | sed -n 's/.*<!--[[:space:]]*v\([0-9]*\)\.\([0-9]*\)[[:space:]]*-->.*/\1 \2/p')
-    [ -z "$_ver" ] && _ver="0 0"
-    echo "$_ver"
+    if [ -f "$_file.version" ]; then
+        _sv=$(sed -n 's/^[[:space:]]*v\{0,1\}\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' "$_file.version" 2>/dev/null | head -n1)
+        [ -n "$_sv" ] && { echo "$_sv"; return; }
+    fi
+    echo "0 0"
 }
 
 # compare two "MAJ MIN" pairs: echoes -1 (a<b), 0 (a==b), 1 (a>b)
@@ -65,10 +70,12 @@ cmp_version() {
 
 vstr() { echo "v${1%% *}.${1##* }"; }
 
-# copy preserving the executable bit (statusline script must stay runnable)
+# copy preserving the executable bit (statusline/hook scripts must stay runnable),
+# carrying along a "<file>.version" sidecar when the source has one
 copy_file() { # $1=src $2=dst
     cp "$1" "$2"
     [ -x "$1" ] && chmod +x "$2"
+    [ -f "$1.version" ] && cp "$1.version" "$2.version"
     return 0
 }
 
@@ -125,7 +132,8 @@ $_entry"; fi
 # to manage a new file-based customization type. NEVER add a directory that holds
 # user data or tool state (settings*.json, projects/, agent-memory/, history.jsonl,
 # plugins/, sessions/, caches, logs) -- those must stay untouched. skills/ is
-# handled separately below (whole-directory copy, not a simple glob).
+# handled separately below (whole-directory copy, not a simple glob). Comment-less
+# files (e.g. themes *.json) track updates via a "<file>.version" sidecar.
 MANAGED_DIRS='
 commands|*.md|1
 agents|*.md|1
@@ -171,7 +179,7 @@ set +f
 # scripts/json/templates, any extension) so we never ship a half-installed skill,
 # but exclude tool-written runtime state (*.log, e.g. *-invocations.log).
 if [ -d "$SCRIPT_DIR/skills" ]; then
-    find "$SCRIPT_DIR/skills" -type f ! -name '*.log' >>"$_list"
+    find "$SCRIPT_DIR/skills" -type f ! -name '*.log' ! -name '*.version' >>"$_list"
 fi
 
 while IFS= read -r _f; do

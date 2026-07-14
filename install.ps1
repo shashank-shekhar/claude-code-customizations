@@ -28,8 +28,11 @@ if (-not (Test-Path -LiteralPath $Target -PathType Container)) {
 
 Write-Host "Target: $Target`n"
 
-# --- read the "<!-- vMAJOR.MINOR -->" marker from a file -------------------
-# Returns [version] object, or v0.0 if missing / no marker.
+# --- resolve a file's version ----------------------------------------------
+# Prefers an inline "<!-- vMAJOR.MINOR -->" marker; for files that cannot hold a
+# comment (e.g. *.json themes) it falls back to a sidecar "<file>.version"
+# containing a bare "vMAJOR.MINOR". Returns [version], or v0.0 if neither is
+# present (such a file installs once and is then left untouched).
 function Read-Version {
     param([string]$File)
     if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return [version]'0.0' }
@@ -38,7 +41,25 @@ function Read-Version {
             return [version]"$($Matches[1]).$($Matches[2])"
         }
     }
+    $sidecar = "$File.version"
+    if (Test-Path -LiteralPath $sidecar -PathType Leaf) {
+        foreach ($line in Get-Content -LiteralPath $sidecar) {
+            if ($line -match 'v?(\d+)\.(\d+)') {
+                return [version]"$($Matches[1]).$($Matches[2])"
+            }
+        }
+    }
     return [version]'0.0'
+}
+
+# copy a managed file, carrying along a "<file>.version" sidecar when present
+function Copy-Managed {
+    param([string]$Src, [string]$Dst)
+    Copy-Item -LiteralPath $Src -Destination $Dst -Force
+    $sidecar = "$Src.version"
+    if (Test-Path -LiteralPath $sidecar -PathType Leaf) {
+        Copy-Item -LiteralPath $sidecar -Destination "$Dst.version" -Force
+    }
 }
 
 function VStr([version]$v) { "v$($v.Major).$($v.Minor)" }
@@ -59,7 +80,7 @@ function Invoke-Process {
     if (-not (Test-Path -LiteralPath $Dst -PathType Leaf)) {
         $dir = Split-Path -Parent $Dst
         if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        Copy-Item -LiteralPath $Src -Destination $Dst
+        Copy-Managed $Src $Dst
         $Installed.Add($rel)
         return
     }
@@ -68,7 +89,7 @@ function Invoke-Process {
     $dver = Read-Version $Dst
 
     if ($rver -gt $dver) {
-        Copy-Item -LiteralPath $Src -Destination $Dst -Force
+        Copy-Managed $Src $Dst
         $Updated.Add("$rel ($(VStr $dver) -> $(VStr $rver))")
     } elseif ($rver -eq $dver) {
         $Unchanged.Add("$rel ($(VStr $rver))")
@@ -83,6 +104,7 @@ function Invoke-Process {
 # that holds user data or tool state (settings*.json, projects/, agent-memory/,
 # history.jsonl, plugins/, sessions/, caches, logs) -- those must stay untouched.
 # skills/ is handled separately below (whole-directory copy, not a simple glob).
+# Comment-less files (e.g. themes *.json) track updates via a "<file>.version" sidecar.
 $ManagedDirs = @(
     @{ Dir = 'commands';      Globs = @('*.md');                Recursive = $true  }
     @{ Dir = 'agents';        Globs = @('*.md');                Recursive = $true  }
@@ -128,7 +150,7 @@ foreach ($spec in $ManagedDirs) {
 $skillsDir = Join-Path $ScriptDir 'skills'
 if (Test-Path -LiteralPath $skillsDir -PathType Container) {
     Get-ChildItem -LiteralPath $skillsDir -File -Recurse |
-        Where-Object { $_.Extension -ne '.log' } |
+        Where-Object { $_.Extension -notin '.log', '.version' } |
         ForEach-Object {
             $rel = $_.FullName.Substring($ScriptDir.Length).TrimStart('\', '/')
             Invoke-Process $_.FullName (Join-Path $Target $rel)
@@ -142,7 +164,7 @@ if ($Conflicts.Count -gt 0) {
         Write-Host "`n  $($c.Rel): on disk $(VStr $c.DVer)  vs  repo $(VStr $c.RVer)"
         $ans = Read-Host '  Overwrite with older repo version? [y/N]'
         if ($ans -match '^(y|yes)$') {
-            Copy-Item -LiteralPath $c.Src -Destination $c.Dst -Force
+            Copy-Managed $c.Src $c.Dst
             $Overwritten.Add($c.Rel)
         } else {
             $Kept.Add($c.Rel)
