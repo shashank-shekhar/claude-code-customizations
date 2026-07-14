@@ -109,3 +109,20 @@ line 1; for files with YAML frontmatter it sits right after the closing `---` (t
 frontmatter must stay on line 1); for scripts it goes in a comment right after the
 shebang (e.g. `# <!-- v1.0 -->`). For file types that can't hold a comment (e.g.
 `*.json`), put the version in a `<file>.version` sidecar instead.
+
+### Enforcing version bumps
+
+Forgetting to bump a version is easy to miss and silent: the installer only
+overwrites when the repo's version is *newer*, so an unbumped edit never reaches
+machines that already have the file. A pre-commit hook in `.githooks/` refuses a
+commit that changes a managed file without bumping its marker (or `.version`
+sidecar). It is not a managed surface, so the installer never copies it. Enable it
+in your clone (this repo only):
+
+```sh
+git config core.hooksPath .githooks
+```
+
+If you already set a global `core.hooksPath`, this overrides it for this repo — call
+`.githooks/pre-commit` from your own hook instead. Bypass a single commit with
+`git commit --no-verify`.

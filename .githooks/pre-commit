@@ -1,0 +1,77 @@
+#!/bin/sh
+# pre-commit: refuse a commit that modifies a managed customization file without
+# bumping its version. The installer only overwrites when the repo's version is
+# NEWER, so an unbumped edit is silently skipped on machines that already have
+# the file -- the change never ships. This hook catches that at commit time.
+#
+# Enable it in your clone (this repo only):
+#     git config core.hooksPath .githooks
+# It is NOT a managed surface, so the installer never copies it anywhere.
+# Bypass a specific commit with:  git commit --no-verify
+set -eu
+
+# Is $1 a file the installer manages? (mirrors MANAGED_DIRS / MANAGED_FILES)
+is_managed() {
+    case $1 in
+        _CLAUDE.md|statusline-command.sh) return 0 ;;
+    esac
+    case ${1%%/*} in
+        commands|agents|rules|output-styles) case $1 in *.md) return 0 ;; esac ;;
+        hooks)     case $1 in *.sh|*.py|*.js) return 0 ;; esac ;;
+        workflows) case $1 in *.js) return 0 ;; esac ;;
+        themes)    case $1 in *.json) return 0 ;; esac ;;
+        skills)    case $1 in *.log|*.version) return 1 ;; *) return 0 ;; esac ;;
+    esac
+    return 1
+}
+
+# Version of a file at a git ref, as "MAJ MIN" ("0 0" if none). $1 is a
+# ref-qualified path, e.g. ":commands/x.md" (staged) or "HEAD:commands/x.md".
+# Prefers the first inline <!-- vX.Y --> marker; falls back to a .version sidecar.
+ver_at() {
+    _content=$(git show "$1" 2>/dev/null) || { echo "0 0"; return; }
+    _m=$(printf '%s\n' "$_content" | grep -oE '<!--[[:space:]]*v[0-9]+\.[0-9]+[[:space:]]*-->' | head -n1)
+    if [ -n "$_m" ]; then
+        printf '%s\n' "$_m" | sed -n 's/.*v\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p'
+        return
+    fi
+    _sv=$(git show "${1%%:*}:${1#*:}.version" 2>/dev/null \
+          | sed -n 's/^[[:space:]]*v\{0,1\}\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' | head -n1) || true
+    [ -n "${_sv:-}" ] && { echo "$_sv"; return; }
+    echo "0 0"
+}
+
+newer() { # true (0) if version $1 > version $2
+    _am=${1%% *}; _an=${1##* }; _bm=${2%% *}; _bn=${2##* }
+    [ "$_am" -gt "$_bm" ] && return 0
+    [ "$_am" -lt "$_bm" ] && return 1
+    [ "$_an" -gt "$_bn" ] && return 0
+    return 1
+}
+vs() { echo "v${1%% *}.${1##* }"; }
+
+fail=0
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+IFS='
+'
+for f in $staged; do
+    is_managed "$f" || continue
+    git cat-file -e "HEAD:$f" 2>/dev/null || continue   # brand-new file: nothing to bump against
+    head_v=$(ver_at "HEAD:$f")
+    idx_v=$(ver_at ":$f")
+    if [ "$head_v" = "0 0" ] && [ "$idx_v" = "0 0" ]; then
+        printf '  note: %s changed but has no version marker/sidecar -- installer will not update it on existing installs\n' "$f" >&2
+        continue
+    fi
+    if ! newer "$idx_v" "$head_v"; then
+        printf '  %s: version not bumped (HEAD %s, staged %s)\n' "$f" "$(vs "$head_v")" "$(vs "$idx_v")" >&2
+        fail=1
+    fi
+done
+unset IFS
+
+if [ "$fail" -ne 0 ]; then
+    printf '%s\n' "pre-commit: bump the <!-- vX.Y --> marker (or .version sidecar) on the files above so the installer ships your change. Bypass with: git commit --no-verify" >&2
+    exit 1
+fi
+exit 0
