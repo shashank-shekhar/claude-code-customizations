@@ -110,6 +110,22 @@ process() {
 
     _rver=$(read_version "$_src")
     _dver=$(read_version "$_dst")
+
+    # Pre-existing destination with no version signal (no marker, no sidecar):
+    # it was not written by us, so never silently clobber it. Byte-identical to
+    # what we'd install -> unchanged (keeps re-runs idempotent); otherwise defer
+    # to the same keep-by-default prompt used for a newer-on-disk copy.
+    if [ "$_dver" = "0 0" ] && [ "$_rver" != "0 0" ]; then
+        if cmp -s "$_src" "$_dst"; then
+            add B_UNCHANGED "$_rel (unversioned)"
+        else
+            _entry=$(printf '%s\t%s\t%s\t%s\t%s' "$_src" "$_dst" "$_dver" "$_rver" "unversioned")
+            if [ -z "$CONFLICTS" ]; then CONFLICTS=$_entry; else CONFLICTS="$CONFLICTS
+$_entry"; fi
+        fi
+        return
+    fi
+
     _c=$(cmp_version "$_rver" "$_dver")
 
     if [ "$_c" = "1" ]; then
@@ -119,7 +135,7 @@ process() {
         add B_UNCHANGED "$_rel ($(vstr "$_rver"))"
     else
         # destination is NEWER -> defer to a prompt after the main pass
-        _entry=$(printf '%s\t%s\t%s\t%s' "$_src" "$_dst" "$_dver" "$_rver")
+        _entry=$(printf '%s\t%s\t%s\t%s\t%s' "$_src" "$_dst" "$_dver" "$_rver" "newer")
         if [ -z "$CONFLICTS" ]; then CONFLICTS=$_entry; else CONFLICTS="$CONFLICTS
 $_entry"; fi
     fi
@@ -190,16 +206,21 @@ rm -f "$_list"
 
 # --- resolve deferred conflicts (dest newer than repo) ---------------------
 if [ -n "$CONFLICTS" ]; then
-    printf '\n%s\n' "The following files on disk are NEWER than this repo's copy:"
+    printf '\n%s\n' "These on-disk files were not written by this installer (newer version, or no version marker) -- confirm before overwriting:"
     _cf=$(mktemp "${TMPDIR:-/tmp}/cc-conflicts.XXXXXX")
     printf '%s\n' "$CONFLICTS" >"$_cf"
     # Read the conflict list on FD 3 so stdin stays free for the user's answer
     # (works both interactively and with piped input).
-    while IFS='	' read -r _src _dst _dver _rver <&3; do
+    while IFS='	' read -r _src _dst _dver _rver _reason <&3; do
         [ -n "$_src" ] || continue
         _rel=${_dst#"$TARGET"/}
-        printf '\n  %s: on disk %s  vs  repo %s\n' "$_rel" "$(vstr "$_dver")" "$(vstr "$_rver")"
-        printf '  Overwrite with older repo version? [y/N] '
+        if [ "$_reason" = "unversioned" ]; then
+            printf '\n  %s: on disk has no version marker (pre-existing?)  vs  repo %s\n' "$_rel" "$(vstr "$_rver")"
+            printf '  Overwrite your existing file? [y/N] '
+        else
+            printf '\n  %s: on disk %s  vs  repo %s\n' "$_rel" "$(vstr "$_dver")" "$(vstr "$_rver")"
+            printf '  Overwrite with older repo version? [y/N] '
+        fi
         read -r _ans || _ans=""
         case $_ans in
             [yY]|[yY][eE][sS]) copy_file "$_src" "$_dst"; add B_OVERWRITTEN "$_rel" ;;
@@ -225,6 +246,6 @@ fi
 print_bucket "Installed (new)" "$B_INSTALLED"
 print_bucket "Updated (repo newer)" "$B_UPDATED"
 print_bucket "Unchanged (equal)" "$B_UNCHANGED"
-print_bucket "Kept (newer on disk, not overwritten)" "$B_KEPT"
+print_bucket "Kept (existing on disk, not overwritten)" "$B_KEPT"
 print_bucket "Overwritten (older repo forced over newer disk)" "$B_OVERWRITTEN"
 printf '\n'

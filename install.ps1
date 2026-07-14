@@ -64,6 +64,11 @@ function Copy-Managed {
 
 function VStr([version]$v) { "v$($v.Major).$($v.Minor)" }
 
+function Test-FilesEqual {
+    param([string]$A, [string]$B)
+    (Get-FileHash -LiteralPath $A -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $B -Algorithm SHA256).Hash
+}
+
 # --- summary buckets --------------------------------------------------------
 $Installed   = [System.Collections.Generic.List[string]]::new()
 $Updated     = [System.Collections.Generic.List[string]]::new()
@@ -88,13 +93,26 @@ function Invoke-Process {
     $rver = Read-Version $Src
     $dver = Read-Version $Dst
 
+    # Pre-existing destination with no version signal (no marker, no sidecar):
+    # it was not written by us, so never silently clobber it. Byte-identical to
+    # what we'd install -> unchanged (keeps re-runs idempotent); otherwise defer
+    # to the same keep-by-default prompt used for a newer-on-disk copy.
+    if ($dver -eq [version]'0.0' -and $rver -ne [version]'0.0') {
+        if (Test-FilesEqual $Src $Dst) {
+            $Unchanged.Add("$rel (unversioned)")
+        } else {
+            $Conflicts.Add([pscustomobject]@{ Src = $Src; Dst = $Dst; Rel = $rel; DVer = $dver; RVer = $rver; Reason = 'unversioned' })
+        }
+        return
+    }
+
     if ($rver -gt $dver) {
         Copy-Managed $Src $Dst
         $Updated.Add("$rel ($(VStr $dver) -> $(VStr $rver))")
     } elseif ($rver -eq $dver) {
         $Unchanged.Add("$rel ($(VStr $rver))")
     } else {
-        $Conflicts.Add([pscustomobject]@{ Src = $Src; Dst = $Dst; Rel = $rel; DVer = $dver; RVer = $rver })
+        $Conflicts.Add([pscustomobject]@{ Src = $Src; Dst = $Dst; Rel = $rel; DVer = $dver; RVer = $rver; Reason = 'newer' })
     }
 }
 
@@ -159,10 +177,15 @@ if (Test-Path -LiteralPath $skillsDir -PathType Container) {
 
 # --- resolve deferred conflicts (dest newer than repo) ---------------------
 if ($Conflicts.Count -gt 0) {
-    Write-Host "`nThe following files on disk are NEWER than this repo's copy:"
+    Write-Host "`nThese on-disk files were not written by this installer (newer version, or no version marker) -- confirm before overwriting:"
     foreach ($c in $Conflicts) {
-        Write-Host "`n  $($c.Rel): on disk $(VStr $c.DVer)  vs  repo $(VStr $c.RVer)"
-        $ans = Read-Host '  Overwrite with older repo version? [y/N]'
+        if ($c.Reason -eq 'unversioned') {
+            Write-Host "`n  $($c.Rel): on disk has no version marker (pre-existing?)  vs  repo $(VStr $c.RVer)"
+            $ans = Read-Host '  Overwrite your existing file? [y/N]'
+        } else {
+            Write-Host "`n  $($c.Rel): on disk $(VStr $c.DVer)  vs  repo $(VStr $c.RVer)"
+            $ans = Read-Host '  Overwrite with older repo version? [y/N]'
+        }
         if ($ans -match '^(y|yes)$') {
             Copy-Managed $c.Src $c.Dst
             $Overwritten.Add($c.Rel)
@@ -187,6 +210,6 @@ if ($Installed.Count -eq 0 -and $Updated.Count -eq 0 -and $Kept.Count -eq 0 -and
 Write-Bucket 'Installed (new)' $Installed
 Write-Bucket 'Updated (repo newer)' $Updated
 Write-Bucket 'Unchanged (equal)' $Unchanged
-Write-Bucket 'Kept (newer on disk, not overwritten)' $Kept
+Write-Bucket 'Kept (existing on disk, not overwritten)' $Kept
 Write-Bucket 'Overwritten (older repo forced over newer disk)' $Overwritten
 Write-Host ''

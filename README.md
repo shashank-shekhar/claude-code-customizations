@@ -6,8 +6,9 @@ more — with installer scripts that copy them into your Claude Code config dire
 (`~/.claude/`).
 
 The install is **version-aware and safe**: it never silently overwrites a file on
-disk that is newer than the repo's copy, and it prints a summary of exactly what it
-changed.
+disk that is newer than the repo's copy — or a pre-existing file that carries no
+version marker (e.g. a `CLAUDE.md` you already had) — and it prints a summary of
+exactly what it changed.
 
 ## Quick start
 
@@ -86,6 +87,7 @@ already installed:
 | repo newer         | overwrite |
 | equal              | skip |
 | **disk newer**     | left alone by default; you're prompted per file (default: keep your newer copy) |
+| **no version on disk** (pre-existing file that differs) | left alone by default; you're prompted per file (default: keep your file) |
 
 Files are **not** backed up — this repo is the source of truth. Nothing under your
 config directory is modified unless you run the script yourself. Every run ends with
