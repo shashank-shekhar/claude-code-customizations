@@ -1,7 +1,10 @@
 #!/usr/bin/env pwsh
-# Install Claude Code customizations (CLAUDE.md + slash commands) into the
-# user-level Claude Code config dir. Version-aware: never silently overwrites a
-# copy on disk that is newer than this repo's. Windows PowerShell / pwsh.
+# Install Claude Code customizations (CLAUDE.md, commands, agents, output-styles,
+# rules, hooks, workflows, themes, skills, statusline) into the user-level Claude
+# Code config dir. Only ever writes these user-authored customization surfaces;
+# user data/config/secrets (settings*.json, projects/, history, credentials, ...)
+# are never touched. Version-aware: never silently overwrites a newer on-disk
+# copy. Windows PowerShell / pwsh.
 $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -74,10 +77,21 @@ function Invoke-Process {
     }
 }
 
-# Top-level dirs of markdown customizations, each mirrored recursively into the
-# target (structure preserved for namespaced commands/agents). Add a dir here to
-# manage a new markdown-based customization type.
-$ManagedDirs = @('commands', 'agents', 'output-styles')
+# Managed customization directories, one row per surface: the directory, the file
+# globs to copy, and whether to recurse (mirror the whole subtree) or stay flat.
+# Add a row to manage a new file-based customization type. NEVER add a directory
+# that holds user data or tool state (settings*.json, projects/, agent-memory/,
+# history.jsonl, plugins/, sessions/, caches, logs) -- those must stay untouched.
+# skills/ is handled separately below (whole-directory copy, not a simple glob).
+$ManagedDirs = @(
+    @{ Dir = 'commands';      Globs = @('*.md');                Recursive = $true  }
+    @{ Dir = 'agents';        Globs = @('*.md');                Recursive = $true  }
+    @{ Dir = 'output-styles'; Globs = @('*.md');                Recursive = $false }
+    @{ Dir = 'rules';         Globs = @('*.md');                Recursive = $true  }
+    @{ Dir = 'hooks';         Globs = @('*.sh', '*.py', '*.js'); Recursive = $true  }
+    @{ Dir = 'workflows';     Globs = @('*.js');                Recursive = $true  }
+    @{ Dir = 'themes';        Globs = @('*.json');              Recursive = $false }
+)
 
 # Top-level files installed by the same name (add extensionless/non-md files here).
 $ManagedFiles = @('statusline-command.sh')
@@ -92,14 +106,33 @@ foreach ($f in $ManagedFiles) {
     }
 }
 
-foreach ($d in $ManagedDirs) {
-    $dir = Join-Path $ScriptDir $d
-    if (Test-Path -LiteralPath $dir -PathType Container) {
-        Get-ChildItem -LiteralPath $dir -Filter '*.md' -File -Recurse | ForEach-Object {
+foreach ($spec in $ManagedDirs) {
+    $dir = Join-Path $ScriptDir $spec.Dir
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+    foreach ($glob in $spec.Globs) {
+        $items = if ($spec.Recursive) {
+            Get-ChildItem -LiteralPath $dir -Filter $glob -File -Recurse
+        } else {
+            Get-ChildItem -LiteralPath $dir -Filter $glob -File
+        }
+        foreach ($item in $items) {
+            $rel = $item.FullName.Substring($ScriptDir.Length).TrimStart('\', '/')
+            Invoke-Process $item.FullName (Join-Path $Target $rel)
+        }
+    }
+}
+
+# skills/: copy each authored skill directory wholesale (SKILL.md + supporting
+# scripts/json/templates, any extension) so we never ship a half-installed skill,
+# but exclude tool-written runtime state (*.log, e.g. *-invocations.log).
+$skillsDir = Join-Path $ScriptDir 'skills'
+if (Test-Path -LiteralPath $skillsDir -PathType Container) {
+    Get-ChildItem -LiteralPath $skillsDir -File -Recurse |
+        Where-Object { $_.Extension -ne '.log' } |
+        ForEach-Object {
             $rel = $_.FullName.Substring($ScriptDir.Length).TrimStart('\', '/')
             Invoke-Process $_.FullName (Join-Path $Target $rel)
         }
-    }
 }
 
 # --- resolve deferred conflicts (dest newer than repo) ---------------------

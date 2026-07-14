@@ -1,7 +1,10 @@
 #!/bin/sh
-# Install Claude Code customizations (CLAUDE.md + slash commands) into the
-# user-level Claude Code config dir. Version-aware: never silently overwrites a
-# copy on disk that is newer than this repo's. macOS + Linux (POSIX sh).
+# Install Claude Code customizations (CLAUDE.md, commands, agents, output-styles,
+# rules, hooks, workflows, themes, skills, statusline) into the user-level Claude
+# Code config dir. Only ever writes these user-authored customization surfaces;
+# user data/config/secrets (settings*.json, projects/, history, credentials, ...)
+# are never touched. Version-aware: never silently overwrites a newer on-disk
+# copy. macOS + Linux (POSIX sh).
 set -eu
 
 # --- locate the repo (this script's own directory) -------------------------
@@ -115,10 +118,23 @@ $_entry"; fi
     fi
 }
 
-# Top-level dirs of markdown customizations, each mirrored recursively into the
-# target (structure preserved for namespaced commands/agents). Add a dir here to
-# manage a new markdown-based customization type.
-MANAGED_DIRS="commands agents output-styles"
+# Managed customization directories, one row per surface:
+#   DIR | GLOBS | RECURSIVE
+# GLOBS is a space-separated list of shell patterns; RECURSIVE is 1 (mirror the
+# whole subtree, e.g. namespaced commands) or 0 (flat, top level only). Add a row
+# to manage a new file-based customization type. NEVER add a directory that holds
+# user data or tool state (settings*.json, projects/, agent-memory/, history.jsonl,
+# plugins/, sessions/, caches, logs) -- those must stay untouched. skills/ is
+# handled separately below (whole-directory copy, not a simple glob).
+MANAGED_DIRS='
+commands|*.md|1
+agents|*.md|1
+output-styles|*.md|0
+rules|*.md|1
+hooks|*.sh *.py *.js|1
+workflows|*.js|1
+themes|*.json|0
+'
 
 # Top-level files installed by the same name (add extensionless/non-md files here).
 MANAGED_FILES="statusline-command.sh"
@@ -131,12 +147,33 @@ for _mf in $MANAGED_FILES; do
     process "$SCRIPT_DIR/$_mf" "$TARGET/$_mf"
 done
 
+# Build the list of source files to mirror, then process it via a redirect (not a
+# pipe) so process()'s bucket mutations stay in this shell.
 _list=$(mktemp "${TMPDIR:-/tmp}/cc-files.XXXXXX")
-for _d in $MANAGED_DIRS; do
-    [ -d "$SCRIPT_DIR/$_d" ] || continue
-    find "$SCRIPT_DIR/$_d" -type f -name '*.md' >>"$_list"
-done
-# redirect (not a pipe) so process()'s bucket mutations stay in this shell
+
+# noglob so the GLOBS patterns are passed literally to find, never expanded
+# against this repo's own files.
+set -f
+printf '%s\n' "$MANAGED_DIRS" | while IFS='|' read -r _dir _globs _rec; do
+    [ -n "$_dir" ] || continue
+    [ -d "$SCRIPT_DIR/$_dir" ] || continue
+    for _g in $_globs; do
+        if [ "$_rec" = "1" ]; then
+            find "$SCRIPT_DIR/$_dir" -type f -name "$_g"
+        else
+            find "$SCRIPT_DIR/$_dir" -maxdepth 1 -type f -name "$_g"
+        fi
+    done
+done >>"$_list"
+set +f
+
+# skills/: copy each authored skill directory wholesale (SKILL.md + supporting
+# scripts/json/templates, any extension) so we never ship a half-installed skill,
+# but exclude tool-written runtime state (*.log, e.g. *-invocations.log).
+if [ -d "$SCRIPT_DIR/skills" ]; then
+    find "$SCRIPT_DIR/skills" -type f ! -name '*.log' >>"$_list"
+fi
+
 while IFS= read -r _f; do
     [ -n "$_f" ] || continue
     process "$_f" "$TARGET/${_f#"$SCRIPT_DIR"/}"
