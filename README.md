@@ -26,29 +26,38 @@ Re-run any time you pull updates; only changed files are touched.
 ## What this repo manages
 
 Each customization type maps to a location under `~/.claude/`. The installer copies
-these versioned **markdown** files, mirroring the repo's structure (including nested
-folders, e.g. namespaced commands):
+these versioned files, mirroring the repo's structure (including nested folders, e.g.
+namespaced commands):
 
 | In the repo | Installs to | What it is |
 |-------------|-------------|------------|
 | `_CLAUDE.md` | `CLAUDE.md` | Global instructions for every session |
 | `commands/**/*.md` | `commands/**` | Slash commands (`/name`, or `/dir:name` when nested) |
 | `agents/**/*.md` | `agents/**` | Custom subagents |
-| `output-styles/**/*.md` | `output-styles/**` | Output styles |
+| `output-styles/*.md` | `output-styles/` | Output styles (flat) |
+| `rules/**/*.md` | `rules/**` | Topic-scoped global instructions |
+| `hooks/**/*.{sh,py,js}` | `hooks/**` | Standalone hook scripts (referenced from `settings.json`) |
+| `workflows/**/*.js` | `workflows/**` | Dynamic workflow scripts (each becomes a `/command`) |
+| `themes/*.json` | `themes/` | Color themes (flat) |
+| `skills/<name>/` | `skills/<name>/` | Skills — whole directory, minus runtime state |
 | `statusline-command.sh` | `statusline-command.sh` | Statusline renderer (referenced by `settings.json`) |
 
-The managed directories are listed in each install script (`MANAGED_DIRS` /
-`$ManagedDirs`) — add a directory name there to manage a new markdown-based type.
-Top-level non-markdown files (like the statusline script) are listed in
-`MANAGED_FILES` / `$ManagedFiles`. The executable bit is preserved on copy.
-The global instructions live in **`_CLAUDE.md`** (underscore-prefixed so they don't
-govern coding sessions *inside this repo*); the installer writes them to `CLAUDE.md`.
+Managed surfaces are declared as a table in each install script (`MANAGED_DIRS` /
+`$ManagedDirs`) — one row per directory giving its file glob(s) and whether to
+recurse. Add a row to manage a new type. `skills/` is special-cased (whole-directory
+copy, excluding tool-written runtime state like `*.log`). Top-level non-directory
+files (like the statusline script) are listed in `MANAGED_FILES` / `$ManagedFiles`.
+The executable bit is preserved on copy. The global instructions live in
+**`_CLAUDE.md`** (underscore-prefixed so they don't govern coding sessions *inside
+this repo*); the installer writes them to `CLAUDE.md`.
 
-**Not yet handled by the installer:** JSON-based customizations (`settings.json`
-hooks/permissions/env, `keybindings.json`) and skill directories (`skills/<name>/`).
-These need a merge/version strategy of their own; keep them out of the managed dirs
-for now. Note the statusline script is installed, but the `statusLine` entry in
-`settings.json` that points to it is not — configure that once by hand.
+**Intentionally not managed:** files the installer must never overwrite because they
+hold your own settings, data, or secrets — `settings.json` / `settings.local.json`
+(permissions, hooks, env), `keybindings.json`, `.credentials.json`, `.claude.json`,
+`projects/`, `history.jsonl`, and every session/cache/log directory. These would need
+a *merge* strategy rather than a copy, so they stay out of the managed surfaces. Note
+the statusline script is installed, but the `statusLine` entry in `settings.json` that
+points to it is not — configure that once by hand.
 
 ## Where it installs
 
@@ -66,8 +75,10 @@ CLAUDE_CONFIG_DIR=/tmp/claude-test sh install.sh
 
 ## How it decides what to copy
 
-Every managed file carries a `<!-- vMAJOR.MINOR -->` version marker. The installer
-compares the repo's version against what's already installed:
+Every managed file carries a version: an inline `<!-- vMAJOR.MINOR -->` marker, or —
+for files that can't hold a comment (e.g. themes `*.json`) — a sibling
+`<file>.version` sidecar. The installer compares the repo's version against what's
+already installed:
 
 | Repo vs. installed | Action |
 |--------------------|--------|
@@ -84,12 +95,15 @@ a summary grouped into *installed / updated / unchanged / kept / overwritten*.
 
 - **Edit global instructions**: change `_CLAUDE.md`, then **bump its version marker**
   (`<!-- v1.1 -->` → `<!-- v1.2 -->`) so the installer picks it up.
-- **Add an item to an existing type**: drop a `*.md` into `commands/`, `agents/`, or
-  `output-styles/` (subfolders allowed) with a version marker. No script change needed.
-- **Manage a new markdown type**: add its directory name to `MANAGED_DIRS` in
-  `install.sh` and `$ManagedDirs` in `install.ps1`.
+- **Add an item to an existing type**: drop a file matching that surface's glob into
+  its directory (subfolders allowed where the surface recurses) with a version marker.
+  No script change needed.
+- **Manage a new type**: add a row — directory, file glob(s), and whether to recurse —
+  to the managed-surface table in **both** `install.sh` (`MANAGED_DIRS`) and
+  `install.ps1` (`$ManagedDirs`). Keep the two scripts in sync.
 
 The version marker must be the first `<!-- vX.Y -->` in the file. For `CLAUDE.md` it's
 line 1; for files with YAML frontmatter it sits right after the closing `---` (the
 frontmatter must stay on line 1); for scripts it goes in a comment right after the
-shebang (e.g. `# <!-- v1.0 -->`).
+shebang (e.g. `# <!-- v1.0 -->`). For file types that can't hold a comment (e.g.
+`*.json`), put the version in a `<file>.version` sidecar instead.
