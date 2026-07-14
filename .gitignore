@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# Editor / IDE
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.swp
+
+# Logs and temp
+*.log
+*.tmp
