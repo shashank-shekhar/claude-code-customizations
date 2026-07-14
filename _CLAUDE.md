@@ -1,14 +1,26 @@
-<!-- v1.1 -->
+<!-- v1.2 -->
 
 ## 1. Think Before Coding
 
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
+**Ask when unclear, confirm when big, otherwise act.**
 
 Before implementing:
 - State your assumptions explicitly. If uncertain, ask.
 - If multiple interpretations exist, present them - don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
 - If something is unclear, stop. Name what's confusing. Ask.
+- If asked a question, answer it — don't jump to an implementation.
+- Short snippets to illustrate a point are fine; full implementations are not.
+
+| Situation | Do this |
+|---|---|
+| Ambiguous, or multiple readings | Ask first; name what's unclear, surface the tradeoff |
+| Clear but non-trivial | Present your understanding + intended approach; wait for explicit go-ahead |
+| Code would help but wasn't asked for | Offer first, then wait |
+| Trivial and unambiguous | Just do it |
+
+**Non-trivial** = new module, multi-file edit, touches more than one concern, or hard to undo.
+The test: would starting now risk building the wrong thing? If yes, confirm first.
 
 ## 2. Simplicity First
 
@@ -87,27 +99,3 @@ Describe what changed and why, briefly:
 - One concise subject line; add a body only if the "why" isn't obvious.
 - Match the repo's existing commit style and tense.
 - No emoji, no boilerplate, no self-promotion.
-
-## 8. Code Only on Request
-
-**Discuss, plan, or answer - but don't write code unprompted.**
-
-Producing code is an action, not a default:
-- If asked a question, answer it - don't jump to an implementation.
-- Planning, design, and review don't require emitting code.
-- When code seems useful but wasn't asked for, offer first, then wait.
-- Short snippets to illustrate a point are fine; full implementations are not.
-
-The test: Did the user actually ask me to write code? If no, don't.
-
-## 9. Confirm Before Non-Trivial Work
-
-**Restate the goal. Get sign-off. Then start.**
-
-Alignment upfront beats rework later:
-- For any multi-step or non-trivial task, summarize the requirement first.
-- Present your understanding + intended approach; wait for explicit go-ahead.
-- Trivial, unambiguous asks don't need a checkpoint - just do them.
-- If scope shifts mid-task, re-confirm before continuing.
-
-The test: Would starting now risk building the wrong thing? If yes, confirm first.
