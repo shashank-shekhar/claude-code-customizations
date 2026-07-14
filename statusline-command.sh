@@ -1,11 +1,11 @@
 #!/bin/sh
-# <!-- v1.0 -->
+# <!-- v1.1 -->
 input=$(cat)
 
 raw_dir=$(printf '%s' "$input" | jq -r '.workspace.current_dir')
 
 # 1. Repo name — git toplevel basename, else current dir basename
-repo_root=$(git -C "$raw_dir" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
+repo_root=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null -C "$raw_dir" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
 if [ -n "$repo_root" ]; then
     repo_str=$(basename "$repo_root")
 else
@@ -13,9 +13,9 @@ else
 fi
 
 # 2. Git branch + dirty marker
-git_branch=$(git -C "$raw_dir" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
+git_branch=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null -C "$raw_dir" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
 if [ -n "$git_branch" ]; then
-    git_dirty=$(git -C "$raw_dir" --no-optional-locks status --porcelain 2>/dev/null | head -c1)
+    git_dirty=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null -C "$raw_dir" --no-optional-locks status --porcelain 2>/dev/null | head -c1)
     if [ -n "$git_dirty" ]; then
         branch_str="$git_branch *"
     else
