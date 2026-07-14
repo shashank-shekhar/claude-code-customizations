@@ -39,20 +39,32 @@ printf 'Target: %s\n\n' "$TARGET"
 # files that cannot hold a comment (e.g. *.json themes) it falls back to a
 # sidecar "<file>.version" containing a bare "vMAJOR.MINOR". "0 0" if neither is
 # present (such a file installs once and is then left untouched).
+# Echo "MAJ MIN" only if both components are <=9 digits (safely within a signed
+# 32-bit int, so sh's arithmetic and PowerShell's [version] cast always agree);
+# otherwise "0 0". A wildly out-of-range marker is thus treated as unversioned
+# (never auto-overwrites) instead of crashing or comparing inconsistently across
+# the two installers.
+clamp_version() {
+    _cm=${1%% *}; _cn=${1##* }
+    if [ ${#_cm} -le 9 ] && [ ${#_cn} -le 9 ]; then echo "$1"; else echo "0 0"; fi
+}
+
 read_version() {
     _file=$1
     if [ ! -f "$_file" ]; then
         echo "0 0"
         return
     fi
-    _line=$(grep -m1 -E '<!--[[:space:]]*v[0-9]+\.[0-9]+[[:space:]]*-->' "$_file" 2>/dev/null || true)
-    if [ -n "$_line" ]; then
-        _ver=$(printf '%s\n' "$_line" | sed -n 's/.*<!--[[:space:]]*v\([0-9]*\)\.\([0-9]*\)[[:space:]]*-->.*/\1 \2/p')
-        [ -n "$_ver" ] && { echo "$_ver"; return; }
+    # first inline marker anywhere in the file; grep -o extracts each match on
+    # its own line, so a second marker on the same line can't shadow the first.
+    _mark=$(grep -oE '<!--[[:space:]]*v[0-9]+\.[0-9]+[[:space:]]*-->' "$_file" 2>/dev/null | head -n1)
+    if [ -n "$_mark" ]; then
+        _ver=$(printf '%s\n' "$_mark" | sed -n 's/.*v\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')
+        [ -n "$_ver" ] && { clamp_version "$_ver"; return; }
     fi
     if [ -f "$_file.version" ]; then
         _sv=$(sed -n 's/^[[:space:]]*v\{0,1\}\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' "$_file.version" 2>/dev/null | head -n1)
-        [ -n "$_sv" ] && { echo "$_sv"; return; }
+        [ -n "$_sv" ] && { clamp_version "$_sv"; return; }
     fi
     echo "0 0"
 }
@@ -79,12 +91,31 @@ copy_file() { # $1=src $2=dst
     return 0
 }
 
+# True (0) if the destination itself, or any path component between $TARGET and
+# it, is a symlink -- following it would let a pre-existing link in the target
+# tree redirect our write outside $TARGET. $TARGET itself is not checked (a user
+# may legitimately symlink their whole .claude dir).
+dest_via_symlink() { # $1=dst
+    [ -L "$1" ] && return 0
+    _sub=$(dirname -- "${1#"$TARGET"/}")
+    [ "$_sub" = "." ] && return 1
+    _walk=$TARGET
+    _oifs=$IFS; IFS=/
+    for _seg in $_sub; do
+        _walk=$_walk/$_seg
+        if [ -L "$_walk" ]; then IFS=$_oifs; return 0; fi
+    done
+    IFS=$_oifs
+    return 1
+}
+
 # --- summary buckets (newline-separated path lists) ------------------------
 B_INSTALLED=""
 B_UPDATED=""
 B_UNCHANGED=""
 B_KEPT=""
 B_OVERWRITTEN=""
+B_SKIPPED=""
 
 # deferred conflicts: lines of "SRC<TAB>DST<TAB>DVER<TAB>RVER"
 CONFLICTS=""
@@ -99,7 +130,13 @@ add() { # $1=bucket-var-name $2=value
 # $1 = source path in repo, $2 = destination path
 process() {
     _src=$1; _dst=$2
+    [ -f "$_src" ] || return 0   # skip a phantom source (e.g. a name split on an embedded newline)
     _rel=${_dst#"$TARGET"/}
+
+    if dest_via_symlink "$_dst"; then
+        add B_SKIPPED "$_rel (symlinked path in target -- refused)"
+        return
+    fi
 
     if [ ! -f "$_dst" ]; then
         mkdir -p "$(dirname -- "$_dst")"
@@ -240,7 +277,7 @@ print_bucket() { # $1=title $2=list
 }
 
 printf '\n==== Summary ====\n'
-if [ -z "$B_INSTALLED$B_UPDATED$B_KEPT$B_OVERWRITTEN" ]; then
+if [ -z "$B_INSTALLED$B_UPDATED$B_KEPT$B_OVERWRITTEN$B_SKIPPED" ]; then
     printf '\nNothing changed. All files already up to date.\n'
 fi
 print_bucket "Installed (new)" "$B_INSTALLED"
@@ -248,4 +285,5 @@ print_bucket "Updated (repo newer)" "$B_UPDATED"
 print_bucket "Unchanged (equal)" "$B_UNCHANGED"
 print_bucket "Kept (existing on disk, not overwritten)" "$B_KEPT"
 print_bucket "Overwritten (older repo forced over newer disk)" "$B_OVERWRITTEN"
+print_bucket "Skipped (symlinked path in target, refused)" "$B_SKIPPED"
 printf '\n'

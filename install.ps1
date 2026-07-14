@@ -33,19 +33,28 @@ Write-Host "Target: $Target`n"
 # comment (e.g. *.json themes) it falls back to a sidecar "<file>.version"
 # containing a bare "vMAJOR.MINOR". Returns [version], or v0.0 if neither is
 # present (such a file installs once and is then left untouched).
+# Return v0.0 for a component wider than 9 digits: it overflows [int]/[version]
+# (which would abort the run under $ErrorActionPreference='Stop') and can't be
+# compared consistently with install.sh's arithmetic. Treat it as unversioned.
+function ConvertTo-ClampedVersion {
+    param([string]$Major, [string]$Minor)
+    if ($Major.Length -gt 9 -or $Minor.Length -gt 9) { return [version]'0.0' }
+    return [version]"$Major.$Minor"
+}
+
 function Read-Version {
     param([string]$File)
     if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return [version]'0.0' }
     foreach ($line in Get-Content -LiteralPath $File) {
         if ($line -match '<!--\s*v(\d+)\.(\d+)\s*-->') {
-            return [version]"$($Matches[1]).$($Matches[2])"
+            return ConvertTo-ClampedVersion $Matches[1] $Matches[2]
         }
     }
     $sidecar = "$File.version"
     if (Test-Path -LiteralPath $sidecar -PathType Leaf) {
         foreach ($line in Get-Content -LiteralPath $sidecar) {
-            if ($line -match 'v?(\d+)\.(\d+)') {
-                return [version]"$($Matches[1]).$($Matches[2])"
+            if ($line -match '^\s*v?(\d+)\.(\d+)') {
+                return ConvertTo-ClampedVersion $Matches[1] $Matches[2]
             }
         }
     }
@@ -69,18 +78,47 @@ function Test-FilesEqual {
     (Get-FileHash -LiteralPath $A -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $B -Algorithm SHA256).Hash
 }
 
+function Test-ReparsePoint {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    [bool]((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)
+}
+
+# True if the destination, or any path component between $Target and it, is a
+# reparse point/symlink -- following it could redirect our write outside $Target.
+# $Target itself is not checked (a user may legitimately symlink their .claude dir).
+function Test-DestViaSymlink {
+    param([string]$Dst)
+    if (Test-ReparsePoint $Dst) { return $true }
+    $sub = Split-Path -Parent ($Dst.Substring($Target.Length).TrimStart('\', '/'))
+    if ([string]::IsNullOrEmpty($sub)) { return $false }
+    $walk = $Target
+    foreach ($seg in ($sub -split '[\\/]+')) {
+        if ([string]::IsNullOrEmpty($seg)) { continue }
+        $walk = Join-Path $walk $seg
+        if (Test-ReparsePoint $walk) { return $true }
+    }
+    return $false
+}
+
 # --- summary buckets --------------------------------------------------------
 $Installed   = [System.Collections.Generic.List[string]]::new()
 $Updated     = [System.Collections.Generic.List[string]]::new()
 $Unchanged   = [System.Collections.Generic.List[string]]::new()
 $Kept        = [System.Collections.Generic.List[string]]::new()
 $Overwritten = [System.Collections.Generic.List[string]]::new()
+$Skipped     = [System.Collections.Generic.List[string]]::new()
 $Conflicts   = [System.Collections.Generic.List[object]]::new()
 
 # --- process one managed file ----------------------------------------------
 function Invoke-Process {
     param([string]$Src, [string]$Dst)
     $rel = $Dst.Substring($Target.Length).TrimStart('\', '/')
+
+    if (Test-DestViaSymlink $Dst) {
+        $Skipped.Add("$rel (symlinked path in target -- refused)")
+        return
+    }
 
     if (-not (Test-Path -LiteralPath $Dst -PathType Leaf)) {
         $dir = Split-Path -Parent $Dst
@@ -155,6 +193,8 @@ foreach ($spec in $ManagedDirs) {
         } else {
             Get-ChildItem -LiteralPath $dir -Filter $glob -File
         }
+        # skip symlinks (parity with sh `find -type f`) and pathological newline names
+        $items = $items | Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $_.Name -notmatch '[\r\n]' }
         foreach ($item in $items) {
             $rel = $item.FullName.Substring($ScriptDir.Length).TrimStart('\', '/')
             Invoke-Process $item.FullName (Join-Path $Target $rel)
@@ -168,7 +208,7 @@ foreach ($spec in $ManagedDirs) {
 $skillsDir = Join-Path $ScriptDir 'skills'
 if (Test-Path -LiteralPath $skillsDir -PathType Container) {
     Get-ChildItem -LiteralPath $skillsDir -File -Recurse |
-        Where-Object { $_.Extension -notin '.log', '.version' } |
+        Where-Object { $_.Extension -notin '.log', '.version' -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $_.Name -notmatch '[\r\n]' } |
         ForEach-Object {
             $rel = $_.FullName.Substring($ScriptDir.Length).TrimStart('\', '/')
             Invoke-Process $_.FullName (Join-Path $Target $rel)
@@ -204,7 +244,7 @@ function Write-Bucket {
 }
 
 Write-Host "`n==== Summary ===="
-if ($Installed.Count -eq 0 -and $Updated.Count -eq 0 -and $Kept.Count -eq 0 -and $Overwritten.Count -eq 0) {
+if ($Installed.Count -eq 0 -and $Updated.Count -eq 0 -and $Kept.Count -eq 0 -and $Overwritten.Count -eq 0 -and $Skipped.Count -eq 0) {
     Write-Host "`nNothing changed. All files already up to date."
 }
 Write-Bucket 'Installed (new)' $Installed
@@ -212,4 +252,5 @@ Write-Bucket 'Updated (repo newer)' $Updated
 Write-Bucket 'Unchanged (equal)' $Unchanged
 Write-Bucket 'Kept (existing on disk, not overwritten)' $Kept
 Write-Bucket 'Overwritten (older repo forced over newer disk)' $Overwritten
+Write-Bucket 'Skipped (symlinked path in target, refused)' $Skipped
 Write-Host ''
