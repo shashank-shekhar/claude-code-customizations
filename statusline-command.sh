@@ -1,5 +1,5 @@
 #!/bin/sh
-# <!-- v1.1 -->
+# <!-- v1.2 -->
 input=$(cat)
 
 raw_dir=$(printf '%s' "$input" | jq -r '.workspace.current_dir')
@@ -31,11 +31,17 @@ model_str=$(printf '%s' "$input" | jq -r '.model.display_name // .model.id // "?
 # 4. Used context percentage (0% fresh session -> 100% full)
 used_pct=$(printf '%s' "$input" | jq -r '.context_window.used_percentage // empty')
 if [ -n "$used_pct" ]; then
-    u=$(awk "BEGIN{v=$used_pct; if(v<0)v=0; if(v>100)v=100; printf \"%.0f\", v}")
+    u=$(awk -v v="$used_pct" 'BEGIN{v=v+0; if(v<0)v=0; if(v>100)v=100; printf "%.0f", v}')
     ctx_str="${u}%"
 else
     ctx_str="0%"
 fi
+
+# Strip control bytes (incl. ESC) from path/model-derived strings so a
+# maliciously-named directory can't inject terminal escape sequences.
+repo_str=$(printf '%s' "$repo_str" | LC_ALL=C tr -d '\000-\037\177')
+branch_str=$(printf '%s' "$branch_str" | LC_ALL=C tr -d '\000-\037\177')
+model_str=$(printf '%s' "$model_str" | LC_ALL=C tr -d '\000-\037\177')
 
 # --- Powerline rendering (Starship gruvbox-style rounded caps) ---
 # Background colors:  Cyan | Yellow | Dim(gray) | Magenta
