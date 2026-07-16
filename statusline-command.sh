@@ -1,13 +1,25 @@
 #!/bin/sh
-# <!-- v1.2 -->
+# <!-- v1.3 -->
 input=$(cat)
 
 raw_dir=$(printf '%s' "$input" | jq -r '.workspace.current_dir')
 
-# 1. Repo name — git toplevel basename, else current dir basename
+# 1. Repo name — git toplevel basename, else current dir basename.
+# In a linked worktree, git-dir and git-common-dir diverge; fall back to the
+# main repo's name for repo_str and surface the worktree folder separately.
 repo_root=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null -C "$raw_dir" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
+git_dir=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null -C "$raw_dir" --no-optional-locks rev-parse --path-format=absolute --git-dir 2>/dev/null)
+git_common_dir=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null -C "$raw_dir" --no-optional-locks rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+
+worktree_str=""
 if [ -n "$repo_root" ]; then
-    repo_str=$(basename "$repo_root")
+    if [ -n "$git_common_dir" ] && [ "$git_dir" != "$git_common_dir" ]; then
+        main_root=$(dirname "$git_common_dir")
+        repo_str=$(basename "$main_root")
+        worktree_str=$(basename "$repo_root")
+    else
+        repo_str=$(basename "$repo_root")
+    fi
 else
     repo_str=$(basename "$raw_dir")
 fi
@@ -40,12 +52,14 @@ fi
 # Strip control bytes (incl. ESC) from path/model-derived strings so a
 # maliciously-named directory can't inject terminal escape sequences.
 repo_str=$(printf '%s' "$repo_str" | LC_ALL=C tr -d '\000-\037\177')
+worktree_str=$(printf '%s' "$worktree_str" | LC_ALL=C tr -d '\000-\037\177')
 branch_str=$(printf '%s' "$branch_str" | LC_ALL=C tr -d '\000-\037\177')
 model_str=$(printf '%s' "$model_str" | LC_ALL=C tr -d '\000-\037\177')
 
 # --- Powerline rendering (Starship gruvbox-style rounded caps) ---
-# Background colors:  Cyan | Yellow | Dim(gray) | Magenta
+# Background colors:  Cyan | Teal(worktree) | Yellow | Dim(gray) | Magenta
 C_BG=80      # cyan (softer)
+W_BG=108     # teal (worktree)
 Y_BG=179     # yellow (softer)
 D_BG=238     # dim gray
 M_BG=171     # magenta (softer)
@@ -60,7 +74,13 @@ BR=""       # git branch icon   (U+E0A0)
 
 printf '%s[38;5;%sm%s'          "$E" "$C_BG" "$CAP_L"                       # left cap (cyan)
 printf '%s[38;5;%s;48;5;%sm %s ' "$E" "$DK" "$C_BG" "$repo_str"            # repo
-printf '%s[38;5;%s;48;5;%sm%s'   "$E" "$C_BG" "$Y_BG" "$SEP"               # -> yellow
+if [ -n "$worktree_str" ]; then
+    printf '%s[38;5;%s;48;5;%sm%s'   "$E" "$C_BG" "$W_BG" "$SEP"           # -> teal
+    printf '%s[38;5;%s;48;5;%sm %s ' "$E" "$DK" "$W_BG" "$worktree_str"    # worktree
+    printf '%s[38;5;%s;48;5;%sm%s'   "$E" "$W_BG" "$Y_BG" "$SEP"           # -> yellow
+else
+    printf '%s[38;5;%s;48;5;%sm%s'   "$E" "$C_BG" "$Y_BG" "$SEP"           # -> yellow
+fi
 printf '%s[38;5;%s;48;5;%sm %s %s ' "$E" "$DK" "$Y_BG" "$BR" "$branch_str" # branch
 printf '%s[38;5;%s;48;5;%sm%s'   "$E" "$Y_BG" "$D_BG" "$SEP"               # -> dim
 printf '%s[38;5;%s;48;5;%sm %s ' "$E" "$LT" "$D_BG" "$model_str"           # model
