@@ -263,4 +263,18 @@ Write-Bucket 'Unchanged (equal)' $Unchanged $C.Dim
 Write-Bucket 'Kept (existing on disk, not overwritten)' $Kept $C.Yellow
 Write-Bucket 'Overwritten (older repo forced over newer disk)' $Overwritten $C.Magenta
 Write-Bucket 'Skipped (symlinked path in target, refused)' $Skipped $C.Red
+
+# one-line color-coded tally of the buckets (only non-zero counts shown)
+$tally = ''
+foreach ($c in @(
+    @{ Color = $C.Green;   Label = 'new';         List = $Installed   },
+    @{ Color = $C.Cyan;    Label = 'updated';     List = $Updated     },
+    @{ Color = $C.Dim;     Label = 'unchanged';   List = $Unchanged   },
+    @{ Color = $C.Yellow;  Label = 'kept';        List = $Kept        },
+    @{ Color = $C.Magenta; Label = 'overwritten'; List = $Overwritten },
+    @{ Color = $C.Red;     Label = 'skipped';     List = $Skipped     }
+)) {
+    if ($c.List.Count -gt 0) { $tally += "$($c.Color)$($c.Label):$($c.List.Count)$($C.Reset) | " }
+}
+if ($tally) { Write-Host "`n$tally" }
 Write-Host ''

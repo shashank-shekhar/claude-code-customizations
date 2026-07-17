@@ -299,4 +299,21 @@ print_bucket "Unchanged (equal)" "$B_UNCHANGED" "$C_DIM"
 print_bucket "Kept (existing on disk, not overwritten)" "$B_KEPT" "$C_YELLOW"
 print_bucket "Overwritten (older repo forced over newer disk)" "$B_OVERWRITTEN" "$C_MAGENTA"
 print_bucket "Skipped (symlinked path in target, refused)" "$B_SKIPPED" "$C_RED"
+
+# one-line color-coded tally of the buckets (only non-zero counts shown)
+count() { # $1=list -> number of entries (non-empty lines)
+    if [ -z "$1" ]; then echo 0; else printf '%s\n' "$1" | grep -c .; fi
+}
+_tally=""
+add_tally() { # $1=color $2=label $3=list
+    _n=$(count "$3")
+    if [ "$_n" -gt 0 ]; then _tally="$_tally$1$2:$_n$C_RESET | "; fi
+}
+add_tally "$C_GREEN"   "new"         "$B_INSTALLED"
+add_tally "$C_CYAN"    "updated"     "$B_UPDATED"
+add_tally "$C_DIM"     "unchanged"   "$B_UNCHANGED"
+add_tally "$C_YELLOW"  "kept"        "$B_KEPT"
+add_tally "$C_MAGENTA" "overwritten" "$B_OVERWRITTEN"
+add_tally "$C_RED"     "skipped"     "$B_SKIPPED"
+if [ -n "$_tally" ]; then printf '\n%s\n' "$_tally"; fi
 printf '\n'
