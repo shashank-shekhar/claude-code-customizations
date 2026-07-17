@@ -236,21 +236,31 @@ if ($Conflicts.Count -gt 0) {
 }
 
 # --- summary ---------------------------------------------------------------
-function Write-Bucket {
-    param([string]$Title, $List)
-    if ($List.Count -eq 0) { return }
-    Write-Host "`n${Title}:"
-    foreach ($item in $List) { Write-Host "  - $item" }
+# Color the summary so changes stand out at a glance. Disabled when stdout is
+# redirected (pipes, files -- keeps captured output byte-identical to the
+# no-color form) or when NO_COLOR is set. Empty vars => plain text.
+$e = [char]27
+if ((-not $env:NO_COLOR) -and (-not [Console]::IsOutputRedirected)) {
+    $C = @{ Reset = "$e[0m"; Bold = "$e[1m"; Dim = "$e[2m"; Green = "$e[32m"; Cyan = "$e[36m"; Yellow = "$e[33m"; Magenta = "$e[35m"; Red = "$e[31m" }
+} else {
+    $C = @{ Reset = ''; Bold = ''; Dim = ''; Green = ''; Cyan = ''; Yellow = ''; Magenta = ''; Red = '' }
 }
 
-Write-Host "`n==== Summary ===="
+function Write-Bucket {
+    param([string]$Title, $List, [string]$Color)
+    if ($List.Count -eq 0) { return }
+    Write-Host "`n$($C.Bold)$Color${Title}:$($C.Reset)"
+    foreach ($item in $List) { Write-Host "  $Color- $item$($C.Reset)" }
+}
+
+Write-Host "`n$($C.Bold)==== Summary ====$($C.Reset)"
 if ($Installed.Count -eq 0 -and $Updated.Count -eq 0 -and $Kept.Count -eq 0 -and $Overwritten.Count -eq 0 -and $Skipped.Count -eq 0) {
     Write-Host "`nNothing changed. All files already up to date."
 }
-Write-Bucket 'Installed (new)' $Installed
-Write-Bucket 'Updated (repo newer)' $Updated
-Write-Bucket 'Unchanged (equal)' $Unchanged
-Write-Bucket 'Kept (existing on disk, not overwritten)' $Kept
-Write-Bucket 'Overwritten (older repo forced over newer disk)' $Overwritten
-Write-Bucket 'Skipped (symlinked path in target, refused)' $Skipped
+Write-Bucket 'Installed (new)' $Installed $C.Green
+Write-Bucket 'Updated (repo newer)' $Updated $C.Cyan
+Write-Bucket 'Unchanged (equal)' $Unchanged $C.Dim
+Write-Bucket 'Kept (existing on disk, not overwritten)' $Kept $C.Yellow
+Write-Bucket 'Overwritten (older repo forced over newer disk)' $Overwritten $C.Magenta
+Write-Bucket 'Skipped (symlinked path in target, refused)' $Skipped $C.Red
 Write-Host ''

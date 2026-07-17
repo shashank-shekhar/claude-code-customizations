@@ -268,22 +268,35 @@ if [ -n "$CONFLICTS" ]; then
 fi
 
 # --- summary ---------------------------------------------------------------
-print_bucket() { # $1=title $2=list
+# Color the summary so changes stand out at a glance. Disabled when stdout is
+# not a TTY (pipes, redirects -- keeps captured output byte-identical to the
+# no-color form) or when NO_COLOR is set. Empty vars => plain text.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_RESET=$(printf '\033[0m');   C_BOLD=$(printf '\033[1m')
+    C_DIM=$(printf '\033[2m')
+    C_GREEN=$(printf '\033[32m');  C_CYAN=$(printf '\033[36m')
+    C_YELLOW=$(printf '\033[33m'); C_MAGENTA=$(printf '\033[35m')
+    C_RED=$(printf '\033[31m')
+else
+    C_RESET=; C_BOLD=; C_DIM=; C_GREEN=; C_CYAN=; C_YELLOW=; C_MAGENTA=; C_RED=
+fi
+
+print_bucket() { # $1=title $2=list $3=color
     [ -n "$2" ] || return 0
-    printf '\n%s:\n' "$1"
+    printf '\n%s%s%s:%s\n' "$C_BOLD" "$3" "$1" "$C_RESET"
     printf '%s\n' "$2" | while IFS= read -r _l; do
-        [ -n "$_l" ] && printf '  - %s\n' "$_l"
+        [ -n "$_l" ] && printf '  %s- %s%s\n' "$3" "$_l" "$C_RESET"
     done
 }
 
-printf '\n==== Summary ====\n'
+printf '\n%s==== Summary ====%s\n' "$C_BOLD" "$C_RESET"
 if [ -z "$B_INSTALLED$B_UPDATED$B_KEPT$B_OVERWRITTEN$B_SKIPPED" ]; then
     printf '\nNothing changed. All files already up to date.\n'
 fi
-print_bucket "Installed (new)" "$B_INSTALLED"
-print_bucket "Updated (repo newer)" "$B_UPDATED"
-print_bucket "Unchanged (equal)" "$B_UNCHANGED"
-print_bucket "Kept (existing on disk, not overwritten)" "$B_KEPT"
-print_bucket "Overwritten (older repo forced over newer disk)" "$B_OVERWRITTEN"
-print_bucket "Skipped (symlinked path in target, refused)" "$B_SKIPPED"
+print_bucket "Installed (new)" "$B_INSTALLED" "$C_GREEN"
+print_bucket "Updated (repo newer)" "$B_UPDATED" "$C_CYAN"
+print_bucket "Unchanged (equal)" "$B_UNCHANGED" "$C_DIM"
+print_bucket "Kept (existing on disk, not overwritten)" "$B_KEPT" "$C_YELLOW"
+print_bucket "Overwritten (older repo forced over newer disk)" "$B_OVERWRITTEN" "$C_MAGENTA"
+print_bucket "Skipped (symlinked path in target, refused)" "$B_SKIPPED" "$C_RED"
 printf '\n'
