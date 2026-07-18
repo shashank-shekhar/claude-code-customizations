@@ -1,5 +1,5 @@
 #!/bin/sh
-# <!-- v1.3 -->
+# <!-- v1.4 -->
 input=$(cat)
 
 raw_dir=$(printf '%s' "$input" | jq -r '.workspace.current_dir')
@@ -49,6 +49,10 @@ else
     ctx_str="0%"
 fi
 
+# 5. Session cost (USD)
+cost_usd=$(printf '%s' "$input" | jq -r '.cost.total_cost_usd // empty')
+cost_str=$(awk -v v="$cost_usd" 'BEGIN{v=v+0; printf "$%.2f", v}')
+
 # Strip control bytes (incl. ESC) from path/model-derived strings so a
 # maliciously-named directory can't inject terminal escape sequences.
 repo_str=$(printf '%s' "$repo_str" | LC_ALL=C tr -d '\000-\037\177')
@@ -63,6 +67,7 @@ W_BG=108     # teal (worktree)
 Y_BG=179     # yellow (softer)
 D_BG=238     # dim gray
 M_BG=171     # magenta (softer)
+G_BG=106     # green (cost)
 DK=16        # dark text
 LT=252       # light text (for dim segment)
 
@@ -86,4 +91,6 @@ printf '%s[38;5;%s;48;5;%sm%s'   "$E" "$Y_BG" "$D_BG" "$SEP"               # -> 
 printf '%s[38;5;%s;48;5;%sm %s ' "$E" "$LT" "$D_BG" "$model_str"           # model
 printf '%s[38;5;%s;48;5;%sm%s'   "$E" "$D_BG" "$M_BG" "$SEP"               # -> magenta
 printf '%s[38;5;%s;48;5;%sm %s ' "$E" "$DK" "$M_BG" "$ctx_str"             # remaining ctx
-printf '%s[0m%s[38;5;%sm%s%s[0m' "$E" "$E" "$M_BG" "$CAP_R" "$E"           # right cap (magenta)
+printf '%s[38;5;%s;48;5;%sm%s'   "$E" "$M_BG" "$G_BG" "$SEP"               # -> green
+printf '%s[38;5;%s;48;5;%sm %s ' "$E" "$DK" "$G_BG" "$cost_str"           # session cost
+printf '%s[0m%s[38;5;%sm%s%s[0m' "$E" "$E" "$G_BG" "$CAP_R" "$E"           # right cap (green)
